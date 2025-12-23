@@ -24,7 +24,7 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
 // Simple file-based database (use a real DB in production)
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-let db = { users: [], songs: [] };
+let db = { users: [], songs: [], playlists: [] };
 
 // Load database
 if (fs.existsSync(DB_FILE)) {
@@ -294,6 +294,127 @@ app.delete('/api/songs/:id', authenticateToken, (req, res) => {
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', users: db.users.length, songs: db.songs.length });
+});
+
+// Playlist Routes
+
+// Get all playlists for user
+app.get('/api/playlists', authenticateToken, (req, res) => {
+  try {
+    const userPlaylists = db.playlists
+      .filter(p => p.userId === req.user.id)
+      .map(({ id, name, description, songIds, createdAt }) => ({
+        id,
+        name,
+        description,
+        songCount: songIds.length,
+        createdAt
+      }));
+    res.json(userPlaylists);
+  } catch (error) {
+    console.error('Get playlists error:', error);
+    res.status(500).json({ error: 'Failed to load playlists' });
+  }
+});
+
+// Create playlist
+app.post('/api/playlists', authenticateToken, (req, res) => {
+  try {
+    const { name, description } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: 'Playlist name is required' });
+    }
+
+    const playlist = {
+      id: Date.now().toString(),
+      name,
+      description: description || '',
+      userId: req.user.id,
+      songIds: [],
+      createdAt: new Date().toISOString()
+    };
+
+    db.playlists.push(playlist);
+    saveDb();
+
+    res.json({ message: 'Playlist created', playlist });
+  } catch (error) {
+    console.error('Create playlist error:', error);
+    res.status(500).json({ error: 'Failed to create playlist' });
+  }
+});
+
+// Delete playlist
+app.delete('/api/playlists/:id', authenticateToken, (req, res) => {
+  try {
+    const playlistIndex = db.playlists.findIndex(
+      p => p.id === req.params.id && p.userId === req.user.id
+    );
+
+    if (playlistIndex === -1) {
+      return res.status(404).json({ error: 'Playlist not found' });
+    }
+
+    db.playlists.splice(playlistIndex, 1);
+    saveDb();
+
+    res.json({ message: 'Playlist deleted' });
+  } catch (error) {
+    console.error('Delete playlist error:', error);
+    res.status(500).json({ error: 'Failed to delete playlist' });
+  }
+});
+
+// Get songs in playlist
+app.get('/api/playlists/:id/songs', authenticateToken, (req, res) => {
+  try {
+    const playlist = db.playlists.find(
+      p => p.id === req.params.id && p.userId === req.user.id
+    );
+
+    if (!playlist) {
+      return res.status(404).json({ error: 'Playlist not found' });
+    }
+
+    const playlistSongs = playlist.songIds
+      .map(songId => db.songs.find(s => s.id === songId))
+      .filter(Boolean)
+      .map(({ id, title, artist }) => ({ id, title, artist }));
+
+    res.json(playlistSongs);
+  } catch (error) {
+    console.error('Get playlist songs error:', error);
+    res.status(500).json({ error: 'Failed to load playlist songs' });
+  }
+});
+
+// Add/Update songs in playlist
+app.post('/api/playlists/:id/songs', authenticateToken, (req, res) => {
+  try {
+    const { songIds } = req.body;
+
+    if (!Array.isArray(songIds)) {
+      return res.status(400).json({ error: 'songIds must be an array' });
+    }
+
+    const playlist = db.playlists.find(
+      p => p.id === req.params.id && p.userId === req.user.id
+    );
+
+    if (!playlist) {
+      return res.status(404).json({ error: 'Playlist not found' });
+    }
+
+    // Replace entire song list with new one
+    playlist.songIds = songIds;
+    saveDb();
+
+    res.json({ message: 'Playlist updated', songCount: songIds.length });
+  } catch (error) {
+    console.error('Update playlist songs error:', error);
+    res.status(500).json({ error: 'Failed to update playlist' });
+  }
 });
 
 // Start server
